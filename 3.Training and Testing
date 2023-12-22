@@ -1,0 +1,224 @@
+# import necessary libraries
+import PIL
+import cv2
+import numpy as np
+from PIL import Image
+import keras
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+from keras.preprocessing.image import ImageDataGenerator
+from keras.layers import Dense, Flatten, Dropout, Reshape, Activation
+from keras.models import Model
+from keras.models import Sequential
+from keras import layers
+from sklearn.metrics import confusion_matrix, classification_report
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from keras import layers
+from keras.layers import  GlobalMaxPooling2D,  MaxPooling2D,GlobalAveragePooling2D, Concatenate,Multiply , Input
+from keras.layers import Conv2D
+from keras import regularizers
+
+X_train = np.load('/content/drive/MyDrive/Colab_Notebooks/cam1/gray_scale/x_train_gray.npy')
+y_train = np.load('/content/drive/MyDrive/Colab_Notebooks/cam1/y_train.npy')
+X_val = np.load('/content/drive/MyDrive/Colab_Notebooks/cam1/gray_scale/x_val_gray.npy')
+y_val = np.load('/content/drive/MyDrive/Colab_Notebooks/cam1/y_val.npy')
+X_test = np.load('/content/drive/MyDrive/Colab_Notebooks/cam1/gray_scale/x_test_gray.npy')
+y_test = np.load('/content/drive/MyDrive/Colab_Notebooks/cam1/y_test.npy')
+
+X_train = np.reshape(X_train,(-1,224,224,1))
+X_test = np.reshape(X_test,(-1,224,224,1))
+X_val = np.reshape(X_val,(-1,224,224,1))
+
+def channel_attention_module(x, ratio=8):
+    batch, _, _, channel = x.shape
+
+    ## Shared layers
+    l1 = Dense(channel//ratio, activation="relu", use_bias=False)
+    l2 = Dense(channel, use_bias=False)
+
+    ## Global Average Pooling
+    x1 = GlobalAveragePooling2D()(x)
+    x1 = l1(x1)
+    x1 = l2(x1)
+
+    ## Global Max Pooling
+    x2 = GlobalMaxPooling2D()(x)
+    x2 = l1(x2)
+    x2 = l2(x2)
+
+    ## Add both the features and pass through sigmoid
+    feats = x1 + x2
+    feats = Activation("sigmoid")(feats)
+    feats = Multiply()([x, feats])
+
+    return feats
+
+def spatial_attention_module(x):
+    ## Average Pooling
+    x1 = tf.reduce_mean(x, axis=-1)
+    x1 = tf.expand_dims(x1, axis=-1)
+
+    ## Max Pooling
+    x2 = tf.reduce_max(x, axis=-1)
+    x2 = tf.expand_dims(x2, axis=-1)
+
+    ## Concatenat both the features
+    feats = Concatenate()([x1, x2])
+    ## Conv layer
+    feats = Conv2D(1, kernel_size=7, padding="same", activation="sigmoid")(feats)
+    feats = Multiply()([x, feats])
+
+    return feats
+
+def cbam(x):
+    x = channel_attention_module(x)
+    x = spatial_attention_module(x)
+    return x
+
+epochs = 50
+batch_size = 32
+input_shape = (224, 224, 1)
+
+def vgg16_cbam():
+
+  inputs = layers.Input(shape=input_shape)
+
+  # Block 1
+  cnn_1_1 = layers.Conv2D(64, kernel_size=(3, 3), padding='same', activation='relu')(inputs)
+  batch_1_1 = layers.BatchNormalization(momentum=0.3)(cnn_1_1)
+  cnn_1_2 = layers.Conv2D(64, kernel_size=(3, 3), padding='same', activation='relu')(batch_1_1)
+  batch_1_2 = layers.BatchNormalization(momentum=0.3)(cnn_1_2)
+  max1 = layers.MaxPooling2D((2, 2), strides=(2, 2))(batch_1_2)
+
+  cbam_1 = cbam(max1)
+
+
+  # Block 2
+  cnn_2_1 = layers.Conv2D(128, kernel_size=(3, 3), padding='same', activation='relu')(cbam_1)
+  batch_2_1 = layers.BatchNormalization(momentum=0.3)(cnn_2_1)
+  cnn_2_2 = layers.Conv2D(128, kernel_size=(3, 3), padding='same', activation='relu')(batch_2_1)
+  batch_2_2 = layers.BatchNormalization(momentum=0.3)(cnn_2_2)
+  max2 = layers.MaxPooling2D((2, 2), strides=(2, 2))(batch_2_2)
+
+  cbam_2 = cbam(max2)
+
+  # Block 3
+  cnn_3_1 = layers.Conv2D(256, kernel_size=(3, 3), padding='same', activation='relu')(cbam_2)
+  batch_3_1 = layers.BatchNormalization(momentum=0.3)(cnn_3_1)
+  cnn_3_2 = layers.Conv2D(256, kernel_size=(3, 3), padding='same', activation='relu')(batch_3_1)
+  batch_3_2 = layers.BatchNormalization(momentum=0.3)(cnn_3_2)
+  cnn_3_3 = layers.Conv2D(256, kernel_size=(3, 3), padding='same', activation='relu')(batch_3_2)
+  batch_3_3 = layers.BatchNormalization(momentum=0.3)(cnn_3_3)
+  max3 = layers.MaxPooling2D((2, 2), strides=(2, 2))(batch_3_3)
+
+  cbam_3 = cbam(max3)
+
+  # Block 4
+  cnn_4_1 = layers.Conv2D(512, kernel_size=(3, 3), padding='same', activation='relu')(cbam_3)
+  batch_4_1 = layers.BatchNormalization(momentum=0.3)(cnn_4_1)
+  cnn_4_2 = layers.Conv2D(512, kernel_size=(3, 3), padding='same', activation='relu')(batch_4_1)
+  batch_4_2 = layers.BatchNormalization(momentum=0.3)(cnn_4_2)
+  cnn_4_3 = layers.Conv2D(512, kernel_size=(3, 3), padding='same', activation='relu')(batch_4_2)
+  batch_4_3 = layers.BatchNormalization(momentum=0.3)(cnn_4_3)
+  max4 = layers.MaxPooling2D((2, 2), strides=(2, 2))(batch_4_3)
+
+  cbam_4 = cbam(max4)
+
+
+  # Block 5
+  cnn_5_1 = layers.Conv2D(512, kernel_size=(3, 3), padding='same', activation='relu')(cbam_4)
+  batch_5_1 = layers.BatchNormalization(momentum=0.3)(cnn_5_1)
+  cnn_5_2 = layers.Conv2D(512, kernel_size=(3, 3), padding='same', activation='relu')(batch_5_1)
+  batch_5_2 = layers.BatchNormalization(momentum=0.3)(cnn_5_2)
+  cnn_5_3 = layers.Conv2D(512, kernel_size=(3, 3), padding='same', activation='relu')(batch_5_2)
+  batch_5_3 = layers.BatchNormalization(momentum=0.3)(cnn_5_3)
+  max5 = layers.MaxPooling2D((2, 2), strides=(2, 2))(batch_5_3)
+
+  cbam_5 = cbam(max5)
+
+
+  # Top
+  flatten = layers.Flatten()(cbam_5)
+  dense_1 = layers.Dense(4096, activation='relu')(flatten)
+  drop_1 = layers.Dropout(0.5)(dense_1)
+  dense_2 = layers.Dense(4096, activation='relu')(drop_1)
+  drop_2 = layers.Dropout(0.5)(dense_2)
+  output = layers.Dense(10, activation='softmax')(drop_2)
+
+
+  model = Model(inputs=inputs, outputs=output)
+
+  return model
+
+vgg16_cbam = vgg16_cbam()
+vgg16_cbam.summary()
+
+train_datagen = ImageDataGenerator(rescale = 1./255.,
+                                   shear_range = 0.2,
+                                   zoom_range = 0.2,
+                                   rotation_range=30,
+                                   horizontal_flip = True
+                                   )
+
+val_datagen = ImageDataGenerator(rescale = 1./255.)
+
+test_datagen = ImageDataGenerator(rescale = 1./255.)
+
+# Compiling the model
+optimizer = keras.optimizers.Adam()
+vgg16_cbam.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=5, verbose=1)
+early_stopping = keras.callbacks.EarlyStopping(monitor='val_accuracy', patience = 10, verbose=1)
+
+# Run this for entire Dataset
+history = vgg16_cbam.fit(train_datagen.flow(X_train,y_train, batch_size = batch_size),
+          epochs = epochs,
+          validation_data = val_datagen.flow(X_val, y_val, batch_size = batch_size),
+          callbacks =[early_stopping],
+          batch_size = batch_size,
+          shuffle = True,
+          steps_per_epoch = len(X_train) // batch_size)
+
+import time
+start_time = time.time()
+yp = vgg16_cbam.predict(test_datagen.flow(X_test,y=None, shuffle=False,batch_size = batch_size))
+end_time = time.time()
+
+test_duration = end_time - start_time
+print(f'Test Duration{test_duration}')
+y_pred = np.argmax(yp, axis=1)
+
+print(classification_report(y_test,y_pred))
+
+plt.plot(history.history['loss'], color='limegreen', marker='o')
+plt.plot(history.history['val_loss'], color='magenta', marker='o')
+plt.title('Train Loss Vs Validation Loss')
+plt.ylabel('Accuracy')
+plt.xlabel('epochs')
+plt.legend(['Train loss', 'Validation Loss'])
+plt.show()
+
+
+plt.plot(history.history['accuracy'], color='limegreen', marker='o')
+plt.plot(history.history['val_accuracy'], color='magenta', marker='o')
+plt.title('Train Accuracy Vs Validation Accuracy')
+plt.ylabel('Accuracy')
+plt.xlabel('epochs')
+plt.legend(['Train Accuracy', 'Validation Accuracy'])
+plt.show()
+
+cm = confusion_matrix(y_test, y_pred)
+class_names = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9']
+
+# Creating a dataframe for a array-formatted Confusion matrix,so it will be easy for plotting.
+cm_df = pd.DataFrame(cm, index = class_names,columns = class_names)
+sns.heatmap(cm_df/np.sum(cm_df), annot = True,annot_kws={'size': 8},
+            fmt='.1%', cmap='Blues')
+# plt.title('Confusion Matrix of VGG16_CBAM')
+plt.ylabel('Actual Values')
+plt.xlabel('Predicted Values')
+plt.xticks()
+plt.show()
